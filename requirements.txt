@@ -1,0 +1,4 @@
+tiktoken>=0.7
+rank-bm25>=0.2.2
+sentence-transformers>=3.0
+numpy>=1.26

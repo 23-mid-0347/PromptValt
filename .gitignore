@@ -1,0 +1,26 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# Environment secrets
+.env
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Model download caches (sentence-transformers, tiktoken)
+.cache/
