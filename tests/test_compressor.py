@@ -1,6 +1,7 @@
 import pytest
 
 from promptvault.compressor import (
+    compress_turn,
     extractive_compress,
     prune_by_information,
     semantic_dedup,
@@ -191,3 +192,120 @@ def test_extractive_compress_zero_budget_returns_empty(fake_scorer):
     assert (
         extractive_compress(text, "query", target_tokens=0, scorer=fake_scorer) == ""
     )
+def test_extractive_compress_does_not_let_smaller_low_relevance_sentence_jump_queue(fake_scorer):
+    """Regression test for a real bug found via end-to-end testing:
+    a highly-relevant-but-large sentence that doesn't fit the budget
+    must not be skipped in favor of a smaller, less-relevant sentence
+    later in the ranking. Once a ranked sentence doesn't fit, nothing
+    lower-ranked should be considered either, even if it would fit."""
+    text = (
+        "Alpha is highly relevant to the query and quite long in wording. "
+        "Zzz unrelated short filler."
+    )
+    query = "alpha relevant query wording"
+    # Budget fits the short filler sentence alone, but not the long
+    # relevant one — if the loop incorrectly skips ahead, "Zzz" would
+    # appear in the output despite being irrelevant and lower-ranked.
+    result = extractive_compress(
+        text, query, target_tokens=4, scorer=fake_scorer, token_counter=_fake_word_count
+    )
+    assert "Zzz" not in result
+
+# ---------------------------------------------------------------------------
+# compress_turn (sequential composition of extractive + entropy pruning)
+# ---------------------------------------------------------------------------
+
+
+class ExplodingEntropyPruner:
+    """Test double that fails the test if stage 2 runs when it
+    shouldn't (extractive selection alone already fit the budget)."""
+
+    def prune(self, text, keep_fraction=0.5):
+        raise AssertionError(
+            "entropy pruning should not run when extractive selection alone fits the budget"
+        )
+
+
+class RecordingEntropyPruner:
+    """Test double that records calls and does a simple word-count
+    trim, standing in for the real distilgpt2-backed EntropyPruner."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, float]] = []
+
+    def prune(self, text, keep_fraction=0.5):
+        self.calls.append((text, keep_fraction))
+        words = text.split()
+        n_keep = max(1, round(len(words) * keep_fraction))
+        return " ".join(words[:n_keep])
+
+
+def test_compress_turn_skips_entropy_pruning_when_extractive_alone_fits(fake_scorer):
+    text = "Short relevant sentence about refunds."
+    result = compress_turn(
+        text,
+        "refund",
+        target_tokens=50,  # generous — extractive alone easily fits
+        scorer=fake_scorer,
+        entropy_pruner=ExplodingEntropyPruner(),
+        token_counter=_fake_word_count,
+    )
+    assert result  # didn't raise, and produced something
+
+
+def test_compress_turn_invokes_entropy_pruning_when_still_over_budget(fake_scorer):
+    text = (
+        "The detailed refund policy explanation about processing times and methods. "
+        "Refund amounts are calculated based on the original payment method used."
+    )
+    pruner = RecordingEntropyPruner()
+    result = compress_turn(
+        text,
+        "refund policy",
+        target_tokens=8,  # tight enough that stage 1 alone won't fit
+        scorer=fake_scorer,
+        entropy_pruner=pruner,
+        token_counter=_fake_word_count,
+    )
+    assert len(pruner.calls) == 1
+    _called_text, keep_fraction = pruner.calls[0]
+    assert 0 < keep_fraction <= 1
+    assert _fake_word_count(result) <= 8
+
+
+def test_compress_turn_overshoot_gives_stage_one_more_material(fake_scorer):
+    """With overshoot > 1.0, stage 1's intermediate budget should be
+    larger than the final target — verified indirectly via the
+    RecordingEntropyPruner seeing more input text than target_tokens
+    would allow on its own."""
+    text = "Alpha sentence about refunds. Beta sentence about refunds. Gamma sentence about refunds."
+    pruner = RecordingEntropyPruner()
+    compress_turn(
+        text,
+        "refunds",
+        target_tokens=5,
+        scorer=fake_scorer,
+        entropy_pruner=pruner,
+        extractive_overshoot=2.0,
+        token_counter=_fake_word_count,
+    )
+    assert len(pruner.calls) == 1
+    stage1_output = pruner.calls[0][0]
+    # Stage 1's output (before pruning) should exceed the final
+    # target — that's the overshoot margin doing its job.
+    assert _fake_word_count(stage1_output) > 5
+
+
+def test_compress_turn_zero_or_negative_budget_returns_empty(fake_scorer):
+    text = "Some content."
+    result = compress_turn(
+        text, "query", target_tokens=0, scorer=fake_scorer, entropy_pruner=ExplodingEntropyPruner()
+    )
+    assert result == ""
+
+
+def test_compress_turn_empty_text_returns_empty(fake_scorer):
+    result = compress_turn(
+        "", "query", target_tokens=50, scorer=fake_scorer, entropy_pruner=ExplodingEntropyPruner()
+    )
+    assert result == ""

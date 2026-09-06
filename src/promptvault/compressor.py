@@ -311,9 +311,97 @@ def extractive_compress(
     selected_ids: set[int] = set()
     used_tokens = 0
     for t in ranked:
-        if used_tokens + t.token_count <= target_tokens:
-            selected_ids.add(t.turn_id)
-            used_tokens += t.token_count
+        # Stop at the first sentence that doesn't fit, rather than
+        # skipping it and checking lower-ranked (smaller) ones next.
+        # Continuing past a miss would let a strictly less-relevant
+        # sentence jump ahead of a more-relevant one purely because it
+        # happened to be smaller — bin-packing optimality, not
+        # relevance-driven selection, which is the whole point of this
+        # function. (Found via a real end-to-end test: an unrelated
+        # "weather" sentence was sneaking into refund-focused output
+        # this way.)
+        if used_tokens + t.token_count > target_tokens:
+            break
+        selected_ids.add(t.turn_id)
+        used_tokens += t.token_count
 
     kept = [t.content for t in pseudo_turns if t.turn_id in selected_ids]
     return " ".join(kept)
+# ---------------------------------------------------------------------------
+# Composition: combining extractive selection + entropy pruning for a
+# single COMPRESS-tier turn (design decided 2026-09: sequential,
+# conditional — see module note below)
+# ---------------------------------------------------------------------------
+
+
+def compress_turn(
+    text: str,
+    query: str,
+    target_tokens: int,
+    scorer: RelevanceScorer,
+    entropy_pruner: EntropyPruner,
+    extractive_overshoot: float = 1.5,
+    token_counter: Callable[[str], int] = count_tokens,
+) -> str:
+    """Compress a single COMPRESS-tier turn's text to fit
+    `target_tokens`, combining both techniques above in sequence.
+
+    DESIGN DECISION: sequential, not alternative techniques, and the
+    second stage is conditional rather than unconditional.
+
+    Extractive selection decides WHAT survives (which whole sentences
+    are relevant); entropy pruning decides HOW DENSELY surviving text
+    is phrased (which individual words within kept sentences are safe
+    to drop as predictable filler). These are complementary axes, not
+    competing solutions to the same problem, so they compose rather
+    than being chosen between.
+
+    The order can't be reversed: entropy pruning needs coherent
+    sentence context to compute meaningful self-information, so
+    running it before sentence selection would corrupt both the LM's
+    context and `split_sentences`'s regex for the extractive stage.
+
+    Stage 1 runs with `extractive_overshoot` slack above the real
+    budget (default 1.5x) so it has enough surviving material to
+    leave for stage 2, rather than being forced to cut whole sentences
+    that stage 2 could have trimmed more cheaply at the word level.
+    Stage 2 only runs if stage 1's output still exceeds
+    `target_tokens` — forcing a second pruning pass on text that
+    already fits would discard real information for no compression
+    benefit, which is the whole reason this is conditional rather
+    than always-on.
+
+    Args:
+        text: the turn's full original content.
+        query: the current query to score relevance against.
+        target_tokens: the real, final token budget for this turn.
+        scorer: RelevanceScorer instance for stage 1.
+        entropy_pruner: EntropyPruner instance for stage 2 (only
+            invoked if needed).
+        extractive_overshoot: multiplier applied to target_tokens for
+            stage 1's intermediate budget, in [1.0, +inf). 1.0 disables
+            the overshoot margin (stage 1 targets the real budget
+            directly, leaving stage 2 little room to work with).
+        token_counter: injectable for tests; defaults to real
+            `count_tokens`.
+
+    Returns:
+        Compressed text, empty string if target_tokens <= 0 or there's
+        no content to select from.
+    """
+    if target_tokens <= 0:
+        return ""
+
+    intermediate_budget = max(1, int(target_tokens * extractive_overshoot))
+    selected = extractive_compress(text, query, intermediate_budget, scorer, token_counter)
+    if not selected:
+        return ""
+
+    current_tokens = token_counter(selected)
+    if current_tokens <= target_tokens:
+        # Stage 1 alone already fits — skip stage 2 entirely (see
+        # "conditional" rationale above).
+        return selected
+
+    keep_fraction = min(1.0, max(0.01, target_tokens / current_tokens))
+    return entropy_pruner.prune(selected, keep_fraction=keep_fraction)

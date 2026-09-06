@@ -52,3 +52,24 @@ def test_semantic_dedup_with_real_embedder_catches_paraphrased_duplicate(real_sc
     kept_ids = {t.turn_id for t in kept}
     assert 3 in kept_ids  # unrelated turn always survives
     assert len(kept) == 2  # t1/t2 collapsed into one
+
+def test_compress_turn_end_to_end_with_real_models(real_scorer, entropy_pruner):
+    """End-to-end sanity check of the full sequential composition
+    (extractive selection -> conditional entropy pruning) with real
+    models on both stages, not test doubles."""
+    from promptvault.compressor import compress_turn
+
+    text = (
+        "The customer requested a refund for their recent purchase. "
+        "They mentioned enjoying the weather this weekend. "
+        "The refund was approved and will be processed within five business days."
+    )
+    result = compress_turn(
+        text,
+        query="what happened with the refund request",
+        target_tokens=15,
+        scorer=real_scorer,
+        entropy_pruner=entropy_pruner,
+    )
+    assert result
+    assert "weather" not in result  # irrelevant sentence should be excluded by stage 1

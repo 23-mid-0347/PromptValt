@@ -3,6 +3,7 @@
 from promptvault.allocator import Tier, allocate_tiers
 from promptvault.compressor import (
     EntropyPruner,
+    compress_turn,
     extractive_compress,
     prune_by_information,
     semantic_dedup,
@@ -19,6 +20,7 @@ __all__ = [
     "Tier",
     "Turn",
     "allocate_tiers",
+    "compress_turn",
     "count_tokens",
     "extractive_compress",
     "prune_by_information",
