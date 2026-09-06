@@ -98,3 +98,47 @@ def test_invalid_compression_ratio_raises(bad_ratio):
 
 def test_empty_turns_returns_empty_dict():
     assert allocate_tiers([], {}, token_budget=100) == {}
+
+def test_recency_floor_capped_when_it_would_starve_budget():
+    """If the intended recency-floor turns alone would exceed
+    max_recency_fraction of the budget, the oldest of them should be
+    bumped back into the relevance-ranked pool rather than starving
+    every other tier."""
+    # Three "recent" turns, each ~50 tokens-ish, total ~150+.
+    recent_turns = [make_turn(i, "word " * 50) for i in (8, 9, 10)]
+    old_high_relevance = make_turn(1, "critical refund policy details")
+    turns = [old_high_relevance, *recent_turns]
+    scores = {1: 0.95, 8: 0.0, 9: 0.0, 10: 0.0}
+
+    # Budget tight enough that all 3 recent turns together would blow
+    # past 50% of it, but the single old high-relevance turn is small.
+    budget = 120
+    tiers = allocate_tiers(
+        turns, scores, token_budget=budget, recency_floor=3, max_recency_fraction=0.5
+    )
+
+    # Not all three "recent" turns can be KEEP_RECENT under the cap.
+    recent_kept = [tid for tid in (8, 9, 10) if tiers[tid] == "KEEP_RECENT"]
+    assert len(recent_kept) < 3
+
+    # The high-relevance older turn should still get a shot at budget
+    # (not starved to DROP by the recency floor alone).
+    assert tiers[1] in ("KEEP_FULL", "COMPRESS")
+
+
+def test_recency_floor_fits_normally_when_within_cap():
+    """Sanity check: when recency turns comfortably fit under the cap,
+    behavior is unchanged from the uncapped case."""
+    turns = [make_turn(i, f"short turn {i}") for i in range(1, 4)]
+    scores = {t.turn_id: 0.5 for t in turns}
+    tiers = allocate_tiers(
+        turns, scores, token_budget=10_000, recency_floor=2, max_recency_fraction=0.5
+    )
+    assert tiers[2] == "KEEP_RECENT"
+    assert tiers[3] == "KEEP_RECENT"
+
+
+@pytest.mark.parametrize("bad_fraction", [0, -0.1, 1.5])
+def test_invalid_max_recency_fraction_raises(bad_fraction):
+    with pytest.raises(ValueError):
+        allocate_tiers([], {}, token_budget=100, max_recency_fraction=bad_fraction)

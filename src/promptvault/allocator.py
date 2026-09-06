@@ -34,6 +34,20 @@ overshoot token_budget; if better, it'll come in under. Treat
 token_budget here as a planning target, not a post-compression
 hard guarantee — that guarantee (if you want one) would need to live
 in assembler.py as a final trim/re-check pass instead.
+
+EDGE CASE (resolved): what if the recency-floor turns alone exceed
+token_budget? Left unhandled, that silently starves every other tier —
+every older turn gets DROP regardless of relevance, since the budget
+goes negative before relevance-based allocation even starts. That's a
+realistic scenario (a small budget with a couple of verbose recent
+turns), not just a theoretical one, so it's capped structurally via
+`max_recency_fraction`: the recency floor may claim at most that
+fraction of token_budget. If the intended recency-floor turns would
+exceed the cap, the oldest of that group are trimmed back into the
+normal relevance-ranked pool instead of being dropped outright — they
+compete for KEEP_FULL/COMPRESS/DROP like any other older turn. This
+guarantees the pipeline never fully starves the relevance-driven tiers
+just because recent turns happened to be long.
 """
 
 from __future__ import annotations
@@ -52,6 +66,7 @@ def allocate_tiers(
     token_budget: int,
     recency_floor: int = 3,
     compression_ratio: float = 0.3,
+    max_recency_fraction: float = 0.5,
 ) -> dict[int, Tier]:
     """Assign each turn a tier under a hard token budget.
 
@@ -68,34 +83,55 @@ def allocate_tiers(
             all kept turns (COMPRESS turns count at their estimated
             compressed size — see module docstring's design note).
         recency_floor: number of most recent turns (by turn_id) that
-            are always kept verbatim, exempt from relevance scoring.
-            Pass 0 to disable and fall back to pure relevance-ranked
-            allocation.
+            are, by default, kept verbatim exempt from relevance
+            scoring. Pass 0 to disable and fall back to pure
+            relevance-ranked allocation. Actual count kept may be
+            lower than this if `max_recency_fraction` caps it (see
+            module docstring's "EDGE CASE" note).
         compression_ratio: estimated fraction of a turn's original
             token count it will occupy after compression, in (0, 1].
+        max_recency_fraction: maximum fraction of token_budget the
+            recency floor is allowed to claim, in (0, 1]. If the
+            intended recency-floor turns would exceed this, the
+            oldest of them are trimmed back into the relevance-ranked
+            pool instead — the recency floor never fully consumes the
+            budget on its own.
 
     Returns:
         {turn_id: tier}. Every input turn appears exactly once.
 
     Raises:
-        ValueError: if recency_floor is negative or compression_ratio
-            is outside (0, 1].
+        ValueError: if recency_floor is negative, or compression_ratio
+            / max_recency_fraction are outside (0, 1].
     """
     if recency_floor < 0:
         raise ValueError("recency_floor must be >= 0")
     if not 0 < compression_ratio <= 1:
         raise ValueError("compression_ratio must be in (0, 1]")
+    if not 0 < max_recency_fraction <= 1:
+        raise ValueError("max_recency_fraction must be in (0, 1]")
 
     ordered = sorted(turns, key=lambda t: t.turn_id)
-    recent_ids = (
-        {t.turn_id for t in ordered[-recency_floor:]} if recency_floor else set()
-    )
+    candidate_recent = ordered[-recency_floor:] if recency_floor else []
+
+    # Cap the recency floor's budget share: walk from the most recent
+    # backwards, only admitting a turn into KEEP_RECENT if doing so
+    # keeps the running recency cost within max_recency_fraction of
+    # the total budget. Anything that doesn't make the cut falls back
+    # into the normal relevance-ranked pool below.
+    recency_cap = token_budget * max_recency_fraction
+    recent_ids: set[int] = set()
+    recency_cost = 0
+    for t in reversed(candidate_recent):
+        if recency_cost + t.token_count <= recency_cap:
+            recent_ids.add(t.turn_id)
+            recency_cost += t.token_count
+        else:
+            break  # older turns in this group are even less likely to fit
 
     tiers: dict[int, Tier] = {}
     remaining_budget = token_budget
 
-    # Recency floor is unconditional: assigned and paid for before any
-    # relevance-based decision is made, per the tier's definition.
     for t in ordered:
         if t.turn_id in recent_ids:
             tiers[t.turn_id] = "KEEP_RECENT"
