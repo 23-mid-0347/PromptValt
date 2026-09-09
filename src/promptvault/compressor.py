@@ -386,16 +386,32 @@ def compress_turn(
             `count_tokens`.
 
     Returns:
-        Compressed text, empty string if target_tokens <= 0 or there's
-        no content to select from.
+        Compressed text. Falls back to entropy-pruning the original
+        text directly if extractive selection finds nothing that fits
+        (see inline note above) — only returns empty string if
+        target_tokens <= 0 or the input text itself has no content.
     """
-    if target_tokens <= 0:
+    if target_tokens <= 0 or not text.strip():
         return ""
 
     intermediate_budget = max(1, int(target_tokens * extractive_overshoot))
     selected = extractive_compress(text, query, intermediate_budget, scorer, token_counter)
+
     if not selected:
-        return ""
+        # Extractive selection found nothing that fits. This happens
+        # when the turn is effectively one atomic "sentence" (no
+        # internal punctuation — a run-on message, a code block, a
+        # long ID string) that's too big for even the overshoot
+        # budget: there's no smaller unit for extractive selection to
+        # choose, so it returns nothing. Rather than losing the whole
+        # turn, fall back to entropy-pruning the ORIGINAL text
+        # directly at the word level, which can still shrink even a
+        # single atomic sentence.
+        original_token_count = token_counter(text)
+        if original_token_count == 0:
+            return ""
+        keep_fraction = min(1.0, max(0.01, target_tokens / original_token_count))
+        return entropy_pruner.prune(text, keep_fraction=keep_fraction)
 
     current_tokens = token_counter(selected)
     if current_tokens <= target_tokens:

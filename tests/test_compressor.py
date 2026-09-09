@@ -309,3 +309,26 @@ def test_compress_turn_empty_text_returns_empty(fake_scorer):
         "", "query", target_tokens=50, scorer=fake_scorer, entropy_pruner=ExplodingEntropyPruner()
     )
     assert result == ""
+
+def test_compress_turn_falls_back_to_entropy_pruning_when_extractive_finds_nothing(fake_scorer):
+    """Regression test for a real gap found via assembler testing: a
+    single atomic 'sentence' (no punctuation) too large to fit the
+    overshoot budget left extractive selection with nothing to choose
+    from, and compress_turn returned '' instead of falling back to
+    entropy-pruning the original text directly."""
+    text = "refund refund refund " + "irrelevant filler word " * 20  # no punctuation at all
+    pruner = RecordingEntropyPruner()
+
+    result = compress_turn(
+        text,
+        "refund",
+        target_tokens=10,
+        scorer=fake_scorer,
+        entropy_pruner=pruner,
+        token_counter=_fake_word_count,
+    )
+
+    assert result != ""
+    assert len(pruner.calls) == 1
+    pruned_text, _keep_fraction = pruner.calls[0]
+    assert pruned_text == text  # fallback pruned the ORIGINAL text, not an empty selection

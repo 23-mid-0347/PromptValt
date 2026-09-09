@@ -1,6 +1,7 @@
 """PromptVault — query-aware relevance compression for LLM conversation history."""
 
 from promptvault.allocator import Tier, allocate_tiers
+from promptvault.assembler import assemble
 from promptvault.compressor import (
     EntropyPruner,
     compress_turn,
@@ -20,6 +21,7 @@ __all__ = [
     "Tier",
     "Turn",
     "allocate_tiers",
+    "assemble",
     "compress_turn",
     "count_tokens",
     "extractive_compress",
