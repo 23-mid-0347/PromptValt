@@ -13,10 +13,12 @@ from promptvault.compressor import (
 from promptvault.scorer import RelevanceScorer
 from promptvault.tokenizer import count_tokens
 from promptvault.types import CompressionResult, Turn
+from promptvault.vault import PromptVault
 
 __all__ = [
     "CompressionResult",
     "EntropyPruner",
+    "PromptVault",
     "RelevanceScorer",
     "Tier",
     "Turn",

@@ -95,6 +95,13 @@ class RelevanceScorer:
             self._embedder = SentenceTransformer(self._embedding_model_name)
         return self._embedder
 
+    @property
+    def embedder(self):
+        """Public accessor for the (lazily-loaded) embedder, so other
+        modules (e.g. vault.py wiring semantic_dedup) can reuse the
+        same loaded model instead of loading a second copy."""
+        return self._get_embedder()
+
     def _get_embeddings(self, turns: list[Turn]) -> np.ndarray:
         """Return embeddings for all turns, computing + caching on the
         Turn object for any turn that doesn't have one yet (per §10:

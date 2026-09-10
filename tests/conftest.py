@@ -1,3 +1,5 @@
+import hashlib
+
 import numpy as np
 import pytest
 
@@ -15,6 +17,16 @@ class FakeEmbedder:
     weighting/normalization/caching *logic* without downloading the
     real ~80MB sentence-transformers model or requiring network.
 
+    Uses hashlib.md5 rather than Python's built-in hash() for bucket
+    assignment: built-in hash() is randomized per-process for strings
+    (PYTHONHASHSEED) as a security feature, which made this "fake
+    embedder" non-deterministic ACROSS separate test runs — a test
+    could pass in one pytest invocation and fail in the next purely
+    from hash-seed luck, with no code change at all. hashlib.md5 gives
+    the same bucket for the same word every time, regardless of
+    process/session, which is what "deterministic" actually requires
+    here.
+
     It deliberately CANNOT validate the "paraphrase with zero shared
     words still scores high" claim from plan §2.1 — that requires
     real semantic understanding. That specific behavior is verified
@@ -24,11 +36,15 @@ class FakeEmbedder:
     def __init__(self, dim: int = 64):
         self.dim = dim
 
+    def _stable_bucket(self, word: str) -> int:
+        digest = hashlib.md5(word.encode("utf-8")).hexdigest()
+        return int(digest, 16) % self.dim
+
     def encode(self, texts, convert_to_numpy: bool = True):
         vectors = np.zeros((len(texts), self.dim), dtype=np.float32)
         for i, text in enumerate(texts):
             for word in _TOKEN_RE.findall(text.lower()):
-                vectors[i, hash(word) % self.dim] += 1.0
+                vectors[i, self._stable_bucket(word)] += 1.0
         return vectors
 
 
