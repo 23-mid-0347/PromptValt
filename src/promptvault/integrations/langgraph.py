@@ -2,9 +2,10 @@
 
 This adapter reads a configured message-list field from graph state, uses
 the latest message as the query, compresses prior conversation history, and
-returns compressed messages as a state update.
+returns a state update suitable for LangGraph message reducers.
 
-LangGraph remains optional: this module does not import it directly.
+LangGraph is an optional dependency and is imported only when the returned
+node executes with overwrite_messages=True.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from promptvault.vault import PromptVault
 
 
 def _message_to_dict(message: Any) -> dict[str, str]:
-    """Normalize common LangChain message objects or role/content dictionaries."""
+    """Normalize LangChain message objects or role/content dictionaries."""
     if isinstance(message, Mapping):
         role = message.get("role") or message.get("type")
         content = message.get("content")
@@ -45,7 +46,8 @@ def as_langgraph_node(
     *,
     query_getter: Callable[[Mapping[str, Any]], str] | None = None,
     preserve_latest_message: bool = True,
-) -> Callable[[Mapping[str, Any]], dict[str, list[dict[str, str]]]]:
+    overwrite_messages: bool = True,
+) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
     """Create a LangGraph node that compresses conversation state.
 
     Args:
@@ -55,9 +57,13 @@ def as_langgraph_node(
             Defaults to the latest message text.
         preserve_latest_message: Keep the latest message verbatim and outside
             compression, recommended for standard chat graphs.
+        overwrite_messages: If True (the default), emit LangGraph's
+            RemoveMessage(REMOVE_ALL_MESSAGES) marker before the new messages.
+            This is required when query_key uses the add_messages reducer.
+            Set False for a plain list field with no reducer.
 
     Returns:
-        A node function that returns a partial state update for query_key.
+        A node function that returns a partial graph-state update.
 
     This first adapter supports text-only user/assistant messages. System/tool
     messages, multimodal content and provider-specific metadata are out of scope.
@@ -67,7 +73,7 @@ def as_langgraph_node(
     if not isinstance(vault, PromptVault):
         raise TypeError("vault must be an instance of PromptVault.")
 
-    def promptvault_node(state: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]:
+    def promptvault_node(state: Mapping[str, Any]) -> dict[str, Any]:
         if query_key not in state:
             raise KeyError(f"LangGraph state has no {query_key!r} key.")
         raw_messages = state[query_key]
@@ -75,17 +81,32 @@ def as_langgraph_node(
             raise TypeError(f"state[{query_key!r}] must be a list of messages.")
         if not raw_messages:
             return {query_key: []}
+
         messages = [_message_to_dict(item) for item in raw_messages]
         query = query_getter(state) if query_getter else messages[-1]["content"]
         if not isinstance(query, str) or not query.strip():
             raise ValueError("The query must be a non-empty string.")
+
         if preserve_latest_message:
             history, latest = messages[:-1], messages[-1]
         else:
             history, latest = messages, None
+
         compressed = vault.compress(history, query).messages if history else []
         if latest is not None:
             compressed = [*compressed, latest]
+
+        if overwrite_messages:
+            try:
+                from langchain_core.messages import RemoveMessage
+                from langgraph.graph.message import REMOVE_ALL_MESSAGES
+            except ImportError as exc:
+                raise ImportError(
+                    "The LangGraph adapter needs the optional dependency. Install it with: "
+                    "pip install -e '.[langgraph]'"
+                ) from exc
+            compressed = [RemoveMessage(id=REMOVE_ALL_MESSAGES), *compressed]
+
         return {query_key: compressed}
 
     promptvault_node.__name__ = "promptvault_node"
