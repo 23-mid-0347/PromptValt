@@ -69,7 +69,7 @@ def test_node_requires_list(vault):
         as_langgraph_node(vault, overwrite_messages=False)({"messages": "no"})
 
 def test_node_rejects_multimodal_content(vault):
-    with pytest.raises(ValueError, match="text-only"):
+    with pytest.raises(TypeError, match="text-only"):
         as_langgraph_node(vault, overwrite_messages=False)({
             "messages": [{"role": "user", "content": [{"type": "text"}]}]
         })
@@ -96,7 +96,8 @@ def test_node_replaces_messages_using_langgraph_add_messages_reducer(vault):
     pytest.importorskip("langgraph")
     pytest.importorskip("langchain_core")
     from typing import Annotated, TypedDict
-    from langchain_core.messages import HumanMessage, AIMessage
+
+    from langchain_core.messages import AIMessage, HumanMessage
     from langgraph.graph import END, START, StateGraph
     from langgraph.graph.message import add_messages
 
