@@ -32,7 +32,7 @@ def _message_to_dict(message: Any) -> dict[str, str]:
     if role is None:
         raise ValueError("Each message must include a role or type field.")
     if not isinstance(content, str):
-        raise ValueError("PromptVault currently supports text-only message content.")
+        raise TypeError("PromptVault currently supports text-only message content.")
     role = str(role).lower()
     role = {"human": "user", "ai": "assistant"}.get(role, role)
     if role not in {"user", "assistant"}:
