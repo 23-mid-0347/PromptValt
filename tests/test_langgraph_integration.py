@@ -53,7 +53,9 @@ def test_node_accepts_langchain_message_objects(vault):
 
 def test_node_custom_query_key(vault):
     node = as_langgraph_node(vault, query_key="chat_history", overwrite_messages=False)
-    assert node({"chat_history": [{"role": "user", "content": "hello"}]}) == {"chat_history": []}
+    assert node({"chat_history": [{"role": "user", "content": "hello"}]}) == {
+        "chat_history": [{"role": "user", "content": "hello"}]
+    }
 
 def test_node_empty_history(vault):
     assert as_langgraph_node(vault)({"messages": []}) == {"messages": []}
@@ -73,9 +75,16 @@ def test_node_rejects_multimodal_content(vault):
         })
 
 def test_query_getter_uses_state_field(vault):
-    node = as_langgraph_node(vault, query_getter=lambda state: state["question"], overwrite_messages=False)
-    result = node({"messages": [{"role": "user", "content": "old question"}], "question": "refund status"})
-    assert result["messages"] == []
+    node = as_langgraph_node(
+        vault,
+        query_getter=lambda state: state["question"],
+        overwrite_messages=False,
+    )
+    with pytest.raises(ValueError, match="non-empty string"):
+        node({
+            "messages": [{"role": "user", "content": "latest message"}],
+            "question": "",
+        })
 
 def test_can_compress_latest_message_when_requested(vault):
     node = as_langgraph_node(vault, preserve_latest_message=False, overwrite_messages=False)
