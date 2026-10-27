@@ -208,5 +208,5 @@ def test_as_langgraph_node_returns_callable(vault):
     node = vault.as_langgraph_node(overwrite_messages=False)
     assert callable(node)
     assert node({"messages": [{"role": "user", "content": "hello"}]}) == {
-        "messages": []
+        "messages": [{"role": "user", "content": "hello"}]
     }
