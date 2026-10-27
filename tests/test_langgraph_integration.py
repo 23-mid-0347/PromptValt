@@ -1,4 +1,5 @@
 """Offline and optional integration tests for the LangGraph adapter."""
+
 import pytest
 
 from promptvault.integrations.langgraph import as_langgraph_node
@@ -6,13 +7,16 @@ from promptvault.scorer import RelevanceScorer
 from promptvault.vault import PromptVault
 from tests.conftest import FakeEmbedder
 
+
 class FakeEntropyPruner:
     def prune(self, text: str, keep_fraction: float = 0.5) -> str:
         words = text.split()
-        return " ".join(words[:max(1, round(len(words) * keep_fraction))])
+        return " ".join(words[: max(1, round(len(words) * keep_fraction))])
+
 
 def word_count(text: str) -> int:
     return len(text.split())
+
 
 @pytest.fixture
 def vault() -> PromptVault:
@@ -21,6 +25,7 @@ def vault() -> PromptVault:
         _scorer=RelevanceScorer(embedder=FakeEmbedder()),
         _entropy_pruner=FakeEntropyPruner(), _token_counter=word_count,
     )
+
 
 def test_node_preserves_latest_message(vault):
     node = as_langgraph_node(vault, overwrite_messages=False)
@@ -32,6 +37,7 @@ def test_node_preserves_latest_message(vault):
     result = node(state)
     assert result["messages"][-1] == state["messages"][-1]
     assert all(isinstance(m["content"], str) for m in result["messages"])
+
 
 def test_node_accepts_langchain_message_objects(vault):
     class HumanMessage:
@@ -45,11 +51,13 @@ def test_node_accepts_langchain_message_objects(vault):
 
         def __init__(self, content):
             self.content = content
+
     result = as_langgraph_node(vault, overwrite_messages=False)({"messages": [
         HumanMessage("I need a refund"), AIMessage("I can help"),
         HumanMessage("Refund status?"),
     ]})
     assert result["messages"][-1] == {"role": "user", "content": "Refund status?"}
+
 
 def test_node_custom_query_key(vault):
     node = as_langgraph_node(vault, query_key="chat_history", overwrite_messages=False)
@@ -57,22 +65,27 @@ def test_node_custom_query_key(vault):
         "chat_history": [{"role": "user", "content": "hello"}]
     }
 
+
 def test_node_empty_history(vault):
     assert as_langgraph_node(vault)({"messages": []}) == {"messages": []}
+
 
 def test_node_missing_key_raises(vault):
     with pytest.raises(KeyError, match="messages"):
         as_langgraph_node(vault, overwrite_messages=False)({"history": []})
 
+
 def test_node_requires_list(vault):
     with pytest.raises(TypeError, match="must be a list"):
         as_langgraph_node(vault, overwrite_messages=False)({"messages": "no"})
+
 
 def test_node_rejects_multimodal_content(vault):
     with pytest.raises(TypeError, match="text-only"):
         as_langgraph_node(vault, overwrite_messages=False)({
             "messages": [{"role": "user", "content": [{"type": "text"}]}]
         })
+
 
 def test_query_getter_uses_state_field(vault):
     node = as_langgraph_node(
@@ -86,10 +99,12 @@ def test_query_getter_uses_state_field(vault):
             "question": "",
         })
 
+
 def test_can_compress_latest_message_when_requested(vault):
     node = as_langgraph_node(vault, preserve_latest_message=False, overwrite_messages=False)
     result = node({"messages": [{"role": "user", "content": "first"}]})
     assert result["messages"][-1]["content"] == "first"
+
 
 @pytest.mark.integration
 def test_node_replaces_messages_using_langgraph_add_messages_reducer(vault):
