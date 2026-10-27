@@ -195,15 +195,18 @@ class PromptVault:
             token_counter=self._token_counter,
         )
 
-    def as_langgraph_node(self, query_key: str = "messages"):
-        """Returns a ready-to-use LangGraph node implementing Pattern B
-        (plan §6.1).
+    def as_langgraph_node(
+        self,
+        query_key: str = "messages",
+        **kwargs,
+    ):
+        """Return a ready-to-use LangGraph adapter node.
 
-        NOT YET IMPLEMENTED — this is a documented stub matching §10's
-        public API shape; the real implementation lands with
-        integrations/langgraph.py.
+        The adapter is imported lazily so the PromptVault core remains usable
+        without the optional LangGraph dependency. Keyword arguments are passed
+        to promptvault.integrations.langgraph.as_langgraph_node(), including
+        query_getter, preserve_latest_message, and overwrite_messages.
         """
-        raise NotImplementedError(
-            "as_langgraph_node is planned but not yet implemented "
-            "(see integrations/langgraph.py in the project plan's next steps)"
-        )
+        from promptvault.integrations.langgraph import as_langgraph_node
+
+        return as_langgraph_node(self, query_key=query_key, **kwargs)
