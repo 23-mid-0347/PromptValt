@@ -204,6 +204,9 @@ def test_budget_safety_margin_reduces_effective_budget():
 # ---------------------------------------------------------------------------
 
 
-def test_as_langgraph_node_raises_not_implemented(vault):
-    with pytest.raises(NotImplementedError):
-        vault.as_langgraph_node()
+def test_as_langgraph_node_returns_callable(vault):
+    node = vault.as_langgraph_node(overwrite_messages=False)
+    assert callable(node)
+    assert node({"messages": [{"role": "user", "content": "hello"}]}) == {
+        "messages": []
+    }
