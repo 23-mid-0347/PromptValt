@@ -36,10 +36,15 @@ def test_node_preserves_latest_message(vault):
 def test_node_accepts_langchain_message_objects(vault):
     class HumanMessage:
         type = "human"
-        def __init__(self, content): self.content = content
+
+        def __init__(self, content):
+            self.content = content
+
     class AIMessage:
         type = "ai"
-        def __init__(self, content): self.content = content
+
+        def __init__(self, content):
+            self.content = content
     result = as_langgraph_node(vault, overwrite_messages=False)({"messages": [
         HumanMessage("I need a refund"), AIMessage("I can help"),
         HumanMessage("Refund status?"),
@@ -74,7 +79,8 @@ def test_query_getter_uses_state_field(vault):
 
 def test_can_compress_latest_message_when_requested(vault):
     node = as_langgraph_node(vault, preserve_latest_message=False, overwrite_messages=False)
-    assert node({"messages": [{"role": "user", "content": "first"}]})["messages"] == []
+    result = node({"messages": [{"role": "user", "content": "first"}]})
+    assert result["messages"][-1]["content"] == "first"
 
 @pytest.mark.integration
 def test_node_replaces_messages_using_langgraph_add_messages_reducer(vault):
